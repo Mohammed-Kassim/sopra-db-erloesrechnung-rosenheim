@@ -148,7 +148,7 @@ with st.sidebar:
         logout()
         st.rerun()
     demo = __import__("repositories.erp_repo", fromlist=["_use_demo"])._use_demo()
-    st.caption("🟡 Demo-Modus" if demo else f"🟢 Echte ERP-Daten\nDatenbank: ERPDEV")
+    st.caption("🟡 Demo-Modus" if demo else f"🟢 Echte ERP-Daten\nDatenbank: ERPDEV26S")
     st.divider()
 
     st.markdown("##### Zeitraum")
