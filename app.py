@@ -12,7 +12,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 
-from repositories.erp_repo import get_sales_data, get_costs_data, get_customers
+from repositories.erp_repo import (
+    authenticate_erp_user,
+    debug_mode,
+    get_sales_data,
+    get_costs_data,
+    get_customers,
+)
 from services.db_calculation_service import berechne_db_gesamt
 
 # ─── Konfiguration ────────────────────────────────────────────────
@@ -80,6 +86,51 @@ LAYOUT = dict(
 C = dict(umsatz="#94a3b8", db1="#3b82f6", db4="#f59e0b",
          db5="#4ade80", cost="#f87171", mk="#a78bfa", prov="#fb923c")
 
+# ─── ERPDEV Login ────────────────────────────────────────────────
+def logout():
+    for key in ("erp_authenticated", "erp_user"):
+        st.session_state.pop(key, None)
+
+
+def require_login():
+    if st.session_state.get("erp_authenticated"):
+        return
+
+    st.markdown("""
+    <div style="max-width:520px;margin:3rem auto 1.5rem auto;background:#0f172a;
+         border:1px solid #334155;border-radius:14px;padding:2rem 2.2rem;">
+      <div style="font-size:1.45rem;font-weight:700;color:#f8fafc;margin-bottom:.35rem;">
+        Anmeldung ERPDEV
+      </div>
+      <div style="font-size:.92rem;color:#94a3b8;line-height:1.55;">
+        Bitte mit dem ERPDEV-Benutzer anmelden. Das Dashboard wird erst nach
+        erfolgreicher Datenbankprüfung geladen.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("erpdev_login_form", clear_on_submit=False):
+        username = st.text_input("ERPDEV-Benutzername")
+        password = st.text_input("ERPDEV-Passwort", type="password")
+        submitted = st.form_submit_button("Anmelden", use_container_width=True)
+
+    if submitted:
+        ok, detail = authenticate_erp_user(username, password)
+        if ok:
+            st.session_state["erp_authenticated"] = True
+            st.session_state["erp_user"] = username.strip()
+            st.rerun()
+        else:
+            st.error("Anmeldung fehlgeschlagen. Bitte ERPDEV-Benutzername und Passwort prüfen.")
+            if debug_mode() and detail:
+                st.caption(detail)
+
+    st.info("Ohne erfolgreiche ERPDEV-Anmeldung werden keine Dashboard-Daten geladen.")
+    st.stop()
+
+
+require_login()
+
 # ─── Daten laden ─────────────────────────────────────────────────
 @st.cache_data(show_spinner="Echte ERP-Daten werden geladen …")
 def load_data():
@@ -91,6 +142,10 @@ sales_df, costs_df, customers_df = load_data()
 with st.sidebar:
     st.markdown("## 🚲 DB-Rechnung")
     st.markdown("**Standort Rosenheim**")
+    st.caption(f"Angemeldet als: {st.session_state.get('erp_user', 'ERPDEV')}")
+    if st.button("Abmelden", use_container_width=True):
+        logout()
+        st.rerun()
     st.divider()
 
     st.markdown("##### Zeitraum")
