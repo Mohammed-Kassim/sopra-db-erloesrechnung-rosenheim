@@ -91,14 +91,6 @@ def debug_mode() -> bool:
     return _is_true("DEBUG_MODE")
 
 
-def get_database_label() -> str:
-    database = _get_config("MSSQL_DATABASE", "ERPDEV")
-    server = _get_config("MSSQL_SERVER")
-    if server:
-        return f"{database} auf {server}"
-    return database or "ERPDEV"
-
-
 def authenticate_erp_user(username: str, password: str) -> tuple[bool, str | None]:
     """Prueft, ob die eingegebenen ERPDEV-Zugangsdaten eine DB-Verbindung erlauben."""
     username = (username or "").strip()
