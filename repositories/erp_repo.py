@@ -18,30 +18,99 @@ STORE_NAME = "Rosenheim"
 
 _engine = None
 
-def _get_engine():
-    global _engine
-    if _engine is not None:
-        return _engine
+class ERPAuthError(Exception):
+    """Interner Fehler fuer ERPDEV-Anmeldung und Datenbankzugriff."""
+
+
+def _get_config(name: str, default: str | None = None) -> str | None:
+    value = os.getenv(name)
+    if value not in (None, ""):
+        return value
+    try:
+        import streamlit as st
+        if name in st.secrets:
+            secret_value = st.secrets[name]
+            return str(secret_value) if secret_value not in (None, "") else default
+    except Exception:
+        pass
+    return default
+
+
+def _is_true(name: str, default: str = "false") -> bool:
+    return str(_get_config(name, default)).strip().lower() in {"1", "true", "yes", "ja"}
+
+
+def _build_engine(username: str | None = None, password: str | None = None):
     from sqlalchemy import create_engine
-    server   = os.getenv("MSSQL_SERVER")
-    database = os.getenv("MSSQL_DATABASE")
-    username = os.getenv("MSSQL_USERNAME")
-    password = os.getenv("MSSQL_PASSWORD")
-    driver   = os.getenv("MSSQL_DRIVER", "ODBC Driver 18 for SQL Server")
-    encrypt  = os.getenv("SQL_ENCRYPT", "yes")
-    trust    = os.getenv("TRUST_SERVER_CERTIFICATE", "false").lower() == "true"
+
+    server = _get_config("MSSQL_SERVER")
+    database = _get_config("MSSQL_DATABASE")
+    username = username if username is not None else _get_config("MSSQL_USERNAME")
+    password = password if password is not None else _get_config("MSSQL_PASSWORD")
+    driver = _get_config("MSSQL_DRIVER", "ODBC Driver 18 for SQL Server")
+    encrypt = _get_config("SQL_ENCRYPT", "yes")
+    trust = _is_true("TRUST_SERVER_CERTIFICATE")
+
+    missing = [
+        name for name, value in {
+            "MSSQL_SERVER": server,
+            "MSSQL_DATABASE": database,
+            "MSSQL_USERNAME": username,
+            "MSSQL_PASSWORD": password,
+        }.items()
+        if value in (None, "")
+    ]
+    if missing:
+        raise ERPAuthError(
+            "Die Datenbankverbindung ist unvollstaendig konfiguriert: "
+            + ", ".join(missing)
+        )
+
     params = urllib.parse.quote_plus(
         f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
         f"UID={username};PWD={password};Encrypt={encrypt};"
         f"TrustServerCertificate={'Yes' if trust else 'No'};Connection Timeout=10;"
     )
-    _engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
+    return create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
+
+
+def _get_engine():
+    global _engine
+    if _engine is not None:
+        return _engine
+    _engine = _build_engine()
     return _engine
 
 def _use_demo() -> bool:
-    if os.getenv("USE_DEMO_DATA", "").lower() == "true":
+    if _is_true("USE_DEMO_DATA"):
         return True
     return not (os.path.exists(_SALES_CSV) and os.path.exists(_COSTS_CSV))
+
+
+def debug_mode() -> bool:
+    return _is_true("DEBUG_MODE")
+
+
+def authenticate_erp_user(username: str, password: str) -> tuple[bool, str | None]:
+    """Prueft, ob die eingegebenen ERPDEV-Zugangsdaten eine DB-Verbindung erlauben."""
+    username = (username or "").strip()
+    if not username or not password:
+        return False, "Bitte ERPDEV-Benutzername und Passwort eingeben."
+
+    engine = None
+    try:
+        from sqlalchemy import text
+        engine = _build_engine(username=username, password=password)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True, None
+    except ERPAuthError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, f"{exc.__class__.__name__}: Verbindung oder Anmeldung fehlgeschlagen."
+    finally:
+        if engine is not None:
+            engine.dispose()
 
 def _norm_month(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, dayfirst=True).dt.strftime("%Y%m")
