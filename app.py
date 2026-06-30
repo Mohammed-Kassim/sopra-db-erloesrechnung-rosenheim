@@ -1,7 +1,7 @@
 """
 app.py  –  DB-/Erlösrechnung Rosenheim
 Streamlit-Frontend  |  Task 13  |  SOPRA
-Echte Daten: dbo_V_LIST_MONTHLY_SALES + dbo_V_LIST_MONTHLY_COSTS
+Echte ERPDEV-Daten
 """
 
 import sys, os
@@ -15,6 +15,7 @@ import plotly.express as px
 from repositories.erp_repo import (
     authenticate_erp_user,
     debug_mode,
+    get_database_label,
     get_sales_data,
     get_costs_data,
     get_customers,
@@ -146,6 +147,8 @@ with st.sidebar:
     if st.button("Abmelden", use_container_width=True):
         logout()
         st.rerun()
+    demo = __import__("repositories.erp_repo", fromlist=["_use_demo"])._use_demo()
+    st.caption("🟡 Demo-Modus" if demo else f"🟢 Echte ERP-Daten\nDatenbank: {get_database_label()}")
     st.divider()
 
     st.markdown("##### Zeitraum")
@@ -186,10 +189,6 @@ with st.sidebar:
                             label_visibility="collapsed")
     sel_ap  = None if ap_wahl == "— Alle —" else ap_wahl
 
-    st.divider()
-    demo = __import__("repositories.erp_repo", fromlist=["_use_demo"])._use_demo()
-    st.caption("🟡 Demo-Modus" if demo else "🟢 Echte ERP-Daten\ndbo_V_LIST_MONTHLY_SALES\ndbo_V_LIST_MONTHLY_COSTS")
-
 # ─── Filter anwenden ─────────────────────────────────────────────
 s_f = sales_df[
     sales_df["ID_CALMONTH"].isin(sel_monate) &
@@ -210,26 +209,13 @@ kpis = r["kpis"]
 monat= r["monat"]
 
 # ─── Header ──────────────────────────────────────────────────────
-ap_badge = (
-    f'<span style="background:#1e3a5f;color:#93c5fd;border:1px solid #3b82f6;'
-    f'border-radius:20px;padding:0.2rem 0.75rem;font-size:0.75rem;font-weight:600;">'
-    f'👤 {sel_ap}</span>' if sel_ap else ""
-)
-st.markdown(f"""
-<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;">
-  <div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);border-radius:12px;
-       padding:0.6rem 1rem;font-size:1.4rem;">🚲</div>
-  <div style="flex:1;">
-    <div style="font-size:1.4rem;font-weight:700;color:#f1f5f9;">
-      DB-/Erlösrechnung · Rosenheim</div>
-    <div style="font-size:0.8rem;color:#64748b;display:flex;align-items:center;
-         gap:0.5rem;margin-top:0.2rem;">
-      SOPRA Gruppe 13 · DB I–V · {mlbl[sel_monate[0]]} – {mlbl[sel_monate[-1]]}
-      {ap_badge}
-    </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+zeitraum_label = f"{mlbl[sel_monate[0]]} - {mlbl[sel_monate[-1]]}"
+header_meta = f"SOPRA Gruppe 13 · DB I-V · {zeitraum_label}"
+if sel_ap:
+    header_meta += f" · Ansprechperson: {sel_ap}"
+
+st.markdown("## 🚲 DB-/Erlösrechnung · Rosenheim")
+st.caption(header_meta)
 
 # ─── Tabs ─────────────────────────────────────────────────────────
 tabs = st.tabs(["📊 Übersicht","📅 Monatsverlauf","📦 Produkte",
@@ -238,13 +224,6 @@ tabs = st.tabs(["📊 Übersicht","📅 Monatsverlauf","📦 Produkte",
 # ════════════════════ TAB 1: ÜBERSICHT ═══════════════════════════
 with tabs[0]:
     st.markdown('<div class="section-title">Gesamtkennzahlen</div>', unsafe_allow_html=True)
-    st.markdown("""<div class="db-banner">
-      Nettoumsatz − Variable Kosten (Transferpreis) = <b>DB I</b>
-      &nbsp;|&nbsp; DB I = <b>DB II</b> = <b>DB III</b> (keine sep. Produktmarketing-Kosten in DB)
-      &nbsp;|&nbsp; DB III − MK-Kampagnen − Provision = <b>DB IV</b>
-      &nbsp;|&nbsp; DB IV − Fixkosten (Miete, Gehalt, Sozial, Sonstige) = <b>DB V</b>
-    </div>""", unsafe_allow_html=True)
-
     cols = st.columns(5)
     for col, (lbl, val, sub, pos) in zip(cols, [
         ("Nettoumsatz",  eur(kpis["Nettoumsatz"]), "", None),
@@ -319,6 +298,14 @@ with tabs[0]:
         ))
         fig2.update_layout(**LAYOUT, height=320, showlegend=False)
         st.plotly_chart(fig2, use_container_width=True)
+
+    st.write("")
+    st.markdown("""<div class="db-banner">
+      Nettoumsatz − Variable Kosten (Transferpreis) = <b>DB I</b>
+      &nbsp;|&nbsp; DB I = <b>DB II</b> = <b>DB III</b> (keine sep. Produktmarketing-Kosten in DB)
+      &nbsp;|&nbsp; DB III − MK-Kampagnen − Provision = <b>DB IV</b>
+      &nbsp;|&nbsp; DB IV − Fixkosten (Miete, Gehalt, Sozial, Sonstige) = <b>DB V</b>
+    </div>""", unsafe_allow_html=True)
 
 # ════════════════════ TAB 2: MONATSVERLAUF ═══════════════════════
 with tabs[1]:
