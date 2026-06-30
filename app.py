@@ -15,7 +15,6 @@ import plotly.express as px
 from repositories.erp_repo import (
     authenticate_erp_user,
     debug_mode,
-    get_database_label,
     get_sales_data,
     get_costs_data,
     get_customers,
@@ -75,6 +74,7 @@ def kpi_html(label, val_str, sub="", positive=None):
             f'<div class="kpi-value{cls}">{val_str}</div>'
             + (f'<div class="kpi-sub">{sub}</div>' if sub else "")
             + '</div>')
+
 
 LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -148,7 +148,7 @@ with st.sidebar:
         logout()
         st.rerun()
     demo = __import__("repositories.erp_repo", fromlist=["_use_demo"])._use_demo()
-    st.caption("🟡 Demo-Modus" if demo else f"🟢 Echte ERP-Daten\nDatenbank: {get_database_label()}")
+    st.caption("🟡 Demo-Modus" if demo else f"🟢 Echte ERP-Daten\nDatenbank: ERPDEV")
     st.divider()
 
     st.markdown("##### Zeitraum")
