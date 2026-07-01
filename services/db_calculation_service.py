@@ -50,6 +50,7 @@ def berechne_db_gesamt(sales_df: pd.DataFrame, costs_df: pd.DataFrame) -> dict:
                        [["Kampagne", "KampagneTyp"]]
                        .drop_duplicates()
                        .rename(columns={"Kampagne": "KampagneName"}))
+    kampagnen_typen = kampagnen_typen.drop_duplicates(subset=["KampagneName"])
 
     mk = mk.merge(kampagnen_typen, on="KampagneName", how="left")
     mk["KampagneTyp"] = mk["KampagneTyp"].fillna("MEDIA")  # Default: filialbezogen
@@ -62,6 +63,10 @@ def berechne_db_gesamt(sales_df: pd.DataFrame, costs_df: pd.DataFrame) -> dict:
     mk_db2  = _mk_monat(_DISCOUNT_TYPEN)   # produktbezogen → DB II
     mk_db3  = _mk_monat(_EVENT_TYPEN)      # gruppenbezogen → DB III
     mk_db4  = _mk_monat(_FILIAL_TYPEN)     # filialbezogen  → DB IV
+    marketing_product = float(mk[mk["KampagneTyp"].isin(_DISCOUNT_TYPEN)]["VALUE"].sum())
+    marketing_group   = float(mk[mk["KampagneTyp"].isin(_EVENT_TYPEN)]["VALUE"].sum())
+    marketing_store   = float(mk[mk["KampagneTyp"].isin(_FILIAL_TYPEN)]["VALUE"].sum())
+    campaign_cost_total = marketing_product + marketing_group + marketing_store
 
     # Commission aus Costs
     commission = (c[c["COST_CATEGORY"] == "Commission"]
@@ -158,33 +163,51 @@ def berechne_db_gesamt(sales_df: pd.DataFrame, costs_df: pd.DataFrame) -> dict:
                           Absatzmenge = ("SalesAmount", "sum"),
                           Rabatte     = ("DiscountEUR", "sum"),
                       ).reset_index())
-    kamp_costs = mk.groupby("KampagneName")["VALUE"].sum().reset_index()
-    kamp_costs.columns = ["Kampagne", "Kampagnenkosten"]
-    kampagne_sales = kampagne_sales.merge(kamp_costs, on="Kampagne", how="left")
-    kampagne_sales["Kampagnenkosten"] = kampagne_sales["Kampagnenkosten"].fillna(0)
+    kamp_costs = (mk.groupby(["KampagneName", "KampagneTyp"], dropna=False)["VALUE"]
+                  .sum()
+                  .reset_index()
+                  .rename(columns={
+                      "KampagneName": "Kampagne",
+                      "VALUE": "Kampagnenkosten",
+                  }))
+    kampagne_sales = kampagne_sales.merge(
+        kamp_costs, on=["Kampagne", "KampagneTyp"], how="outer"
+    )
+    for col in ["Nettoumsatz", "DB_I_Gesamt", "Absatzmenge", "Rabatte", "Kampagnenkosten"]:
+        kampagne_sales[col] = kampagne_sales[col].fillna(0)
+    kampagne_sales["Kampagne"] = kampagne_sales["Kampagne"].fillna("Unzugeordnete Kampagne")
+    kampagne_sales["KampagneTyp"] = kampagne_sales["KampagneTyp"].fillna("MEDIA")
     kampagne_sales["DB_nach_Kampagne"] = kampagne_sales["DB_I_Gesamt"] - kampagne_sales["Kampagnenkosten"]
     kampagne_sales["ROI"] = (kampagne_sales["DB_I_Gesamt"] /
                              kampagne_sales["Kampagnenkosten"].replace(0, float("nan"))).round(2)
-    kampagne_sales["DB_I_Marge"] = (kampagne_sales["DB_I_Gesamt"] / kampagne_sales["Nettoumsatz"] * 100).round(1)
+    kampagne_sales["DB_I_Marge"] = (
+        kampagne_sales["DB_I_Gesamt"] /
+        kampagne_sales["Nettoumsatz"].replace(0, float("nan")) * 100
+    ).round(1).fillna(0)
     kampagne_sales["DB_Stufe"] = kampagne_sales["KampagneTyp"].map(
         lambda t: "DB II" if t in _DISCOUNT_TYPEN
         else "DB III" if t in _EVENT_TYPEN
         else "DB IV"
     )
+    kampagne_sales = kampagne_sales.sort_values(
+        ["Kampagnenkosten", "Nettoumsatz"], ascending=False
+    )
+    campaign_table_total = float(kampagne_sales["Kampagnenkosten"].sum())
+    campaign_reconciliation_diff = campaign_cost_total - campaign_table_total
 
     # ── 8. Gesamt-KPIs ────────────────────────────────────────────
     store_m2     = int(s["StoreM2"].iloc[0])
     total_um     = monat["Nettoumsatz"].sum()
     total_db1    = monat["DB_I"].sum()
-    total_db2    = monat["DB_II"].sum()
-    total_db3    = monat["DB_III"].sum()
-    total_db4    = monat["DB_IV"].sum()
-    total_db5    = monat["DB_V"].sum()
     total_fixk   = monat["Fixkosten"].sum()
     total_comm   = monat["Commission"].sum()
-    total_mk2    = monat["MK_DB2"].sum()
-    total_mk3    = monat["MK_DB3"].sum()
-    total_mk4    = monat["MK_DB4"].sum()
+    total_mk2    = marketing_product
+    total_mk3    = marketing_group
+    total_mk4    = marketing_store
+    total_db2    = total_db1 - total_mk2
+    total_db3    = total_db2 - total_mk3
+    total_db4    = total_db3 - total_mk4 - total_comm
+    total_db5    = total_db4 - total_fixk
     gehalt_sum   = c[c["COST_CATEGORY"] == "Monthly Salary"]["VALUE"].sum()
 
     kpis = {
@@ -201,8 +224,11 @@ def berechne_db_gesamt(sales_df: pd.DataFrame, costs_df: pd.DataFrame) -> dict:
         "DB_V_Marge":          round(total_db5 / total_um * 100, 1),
         "Fixkostenquote":      round(total_fixk / total_um * 100, 1),
         "Personalkostenquote": round(gehalt_sum  / total_um * 100, 1),
-        "MK_Kampagne":         total_mk2 + total_mk3 + total_mk4,
-        "Marketingkostenquote": round((total_mk2 + total_mk3 + total_mk4) / total_um * 100, 1),
+        "MK_Kampagne":         campaign_cost_total,
+        "Campaign_Cost_Total":  campaign_cost_total,
+        "Campaign_Table_Total": campaign_table_total,
+        "Campaign_Reconciliation_Diff": campaign_reconciliation_diff,
+        "Marketingkostenquote": round(campaign_cost_total / total_um * 100, 1),
         "MK_DB2":              total_mk2,
         "MK_DB3":              total_mk3,
         "MK_DB4":              total_mk4,
@@ -217,12 +243,17 @@ def berechne_db_gesamt(sales_df: pd.DataFrame, costs_df: pd.DataFrame) -> dict:
     }
 
     # ── 9. Wasserfall ─────────────────────────────────────────────
-    wasserfall = pd.DataFrame([
+    wasserfall_rows = [
         {"Stufe": "Nettoumsatz",      "Wert": total_um,    "Typ": "start"},
         {"Stufe": "− Variable K.",    "Wert": -(total_um - total_db1), "Typ": "cost"},
         {"Stufe": "= DB I",           "Wert": total_db1,   "Typ": "result"},
-        {"Stufe": "− MK Produkt",     "Wert": -total_mk2,  "Typ": "cost"},
-        {"Stufe": "= DB II",          "Wert": total_db2,   "Typ": "result"},
+    ]
+    if total_mk2 != 0:
+        wasserfall_rows.extend([
+            {"Stufe": "− MK Produkt", "Wert": -total_mk2, "Typ": "cost"},
+            {"Stufe": "= DB II",      "Wert": total_db2,  "Typ": "result"},
+        ])
+    wasserfall_rows.extend([
         {"Stufe": "− MK Gruppe",      "Wert": -total_mk3,  "Typ": "cost"},
         {"Stufe": "= DB III",         "Wert": total_db3,   "Typ": "result"},
         {"Stufe": "− MK Filiale",     "Wert": -total_mk4,  "Typ": "cost"},
@@ -235,6 +266,7 @@ def berechne_db_gesamt(sales_df: pd.DataFrame, costs_df: pd.DataFrame) -> dict:
         {"Stufe": "= DB V",           "Wert": total_db5,
          "Typ": "positive" if total_db5 >= 0 else "negative"},
     ])
+    wasserfall = pd.DataFrame(wasserfall_rows)
 
     return {
         "monat":       monat,
